@@ -52,11 +52,11 @@ runtime would also become possible.
 
 At a conceptual level, we propose to mostly keep the current domain scheduler
 implementation as it is: a compile-time sized array of entries consisting of
-duration and domain. Instead of representing a single schedule as before, we
+domain and duration. Instead of representing a single schedule as before, we
 propose to use the array now for representing multiple schedules. The new
-components  are:
+components are:
 
-- entries with duration 0 are end markers for a domain schedule
+- entries with the value `(0, 0)` are end markers for a domain schedule
 - there is a new kernel global that contains the start index for the current
   domain schedule
 
@@ -66,7 +66,7 @@ The following diagram shows an example.
 
 ```none
 -----------------------------------------------------------------
-| (t_0, d_0) | (t_1, d_1) | ... | (0, 0) | (t_x, d_x) | .. | .. |
+| (d_0, t_0) | (d_1, t_1) | ... | (0, 0) | (d_x, t_x) | .. | .. |
 -----------------------------------------------------------------
        0          ^                  n         n+1
 
@@ -78,7 +78,7 @@ The example has an overall array of length `config_DomScheduleLength`,
 configured at compile time, a current domain start index of 0, and an currently
 active domain schedule index of 1. The current entry will run domain `d_1` for a
 duration of `t_1 > 0`, and the schedule will keep going until it hits index `n`
-which has an entry with duration 0. Instead of running the entry at index `n`,
+which has an entry with value `(0, 0)`. Instead of running the entry at index `n`,
 it proceeds at `ksDomainStart`, i.e. index 0.
 
 To populate the entires, a user thread with the `DomainCap` can invoke the
@@ -101,14 +101,22 @@ until a new schedule is set. However, implementing it would be more invasive
 than the currently proposed changes and the same effect can already be achieved
 with a one-element schedule of long duration.
 
-Since all duration 0 signifies an end marker, all active schedule entries
-automatically have a duration > 0. On MCS, the duration at the API level is in
-microseconds and must be >= MIN_PERIOD. The stored duration is in timer ticks.
-On non-MCS configurations, the duration is measured in number of ticks (time
-slices).
+Apart from the value `(0, 0)`, the kernel will prevent the creation of entries
+with duration 0. On MCS, the duration at the API level is in microseconds and
+must be >= MIN_PERIOD. The stored duration is in timer ticks. On non-MCS
+configurations, the duration is measured in number of ticks (time slices).
 
 The kernel initialises with an array where all entries are `(0, 0)`, apart from
 the entry at index 0, which will run domain 0 for the maximum expressible time.
+
+The kernel will preserve the following invariants:
+
+- `ksDomainStart < config_DomScheduleLength`
+- `ksDomScheduleIdx < config_DomScheduleLength`
+- `schedule[ksDomainStart].duration ~= 0`
+- for all `i` with `0 <= i config_DomScheduleLength`,
+  if `schedule[i].duration = 0` then `schedule[i].domain = 0`
+
 
 ## Reference-level explanation
 
@@ -117,29 +125,106 @@ the entry at index 0, which will run domain 0 for the maximum expressible time.
 The current invocations of the `DomainCap` remain as they are.
 There are two new invocations:
 
-#### setDomainStart
+#### Set_Domain_Start
 
-TODO
+`static inline int seL4_Set_Domain_Start`
 
-<!--
-Explain switching behaviour (new domain starts running after this syscall)
--->
+Set the start index of the current domain schedule. The schedule entry at this
+index must not be the end marker `(0, 0)`. The domain at the schedule entry with
+the specified index will start running immediately after the kernel call
+completes.
 
-#### setDomainEntry
+| Type        | Name       | Description                                     |
+| ----------- | ---------- | ----------------------------------------------- |
+| `seL4_DomainSet` | `_service` | Domain capability to authorise the call         |
+| `seL4_Word`      | `index`    | The new start index. Must not point to `(0,0)` and must be smaller than `config_DomScheduleLength` |
 
-TODO
+The function returns `seL4_NoError` for success as usual. The following error
+codes are returned otherwise:
 
-<!--
-Explain effect of updating current entry (will be ignored until entry is read
-next time in the schedule). Generally should avoid updating currently running
-schedule, instead create new schedule only beyond current end marker.
--->
+| Error                  | Possible cause                                  |
+| ---------------------- | ----------------------------------------------- |
+| `seL4_InvalidCapability` | the provided capability is not the domain capability |
+| `seL4_InvalidArgument`   | the entry at the provided index is an end marker     |
+| `seL4_RangeError`        | the index is not less than `config_DomScheduleLength` |
+
+
+#### Set_Domain_Entry
+
+`static inline int seL4_Set_Domain_Entry`
+
+Set and entry in the domain schedule at the specified index to the specified
+domain and duration. If the duration is 0, the domain must also be 0 to indicate
+and end marker. On MCS, the duration must be `>= MIN_BUDGET`. If the index is
+the current schedule start index, the entry must not be an end marker `(0, 0)`.
+
+The change to the schedule takes effect when the entry is next read by the
+kernel. In particular, when the duration or domain of the currently running
+schedule index are changed, the change will only take effect after the current
+domain time slice has expired and the schedule reaches the current index again.
+
+Section [Initialisation](#initialisation) contains a scenario where setting the
+entry at the currently running index may be useful, but generally one should
+avoid updating the currently running schedule. Instead create new schedules
+beyond current end marker and then set the schedule start once the system is
+ready to switch.
+
+| Type        | Name       | Description                                     |
+| ----------- | ---------- | ----------------------------------------------- |
+| `seL4_DomainSet` | `_service` | Domain capability to authorise the call         |
+| `seL4_Word`      | `index`    | The index of the entry to set. Must be smaller than `config_DomScheduleLength`. |
+| `seL4_Uint8`     | `domain`   | The domain of the schedule entry. Must be smaller than `CONFIG_NUM_DOMAINS`. Must be 0 if the duration is 0. |
+| `seL4_Word`      | `duration` | The duration for the entry. On MCS, must be 0 or `>= MIN_BUDGET`. |
+
+The function returns `seL4_NoError` for success as usual. The following error
+codes are returned otherwise:
+
+| Error                  | Possible cause                                  |
+| ---------------------- | ----------------------------------------------- |
+| `seL4_InvalidCapability` | the provided capability is not the domain capability |
+| `seL4_InvalidArgument`   | the index is the current domain start index and the duration is 0, or the duration is 0, but the domain is not 0. |
+| `seL4_RangeError`        | the index is not less than `config_DomScheduleLength`, or the domain is not less than `CONFIG_NUM_DOMAINS`, or on MCS the duration is less than `MIN_BUDGET` |
 
 ### Configuration Options
 
 The new config option `config_DomScheduleLength` determines the static size of
 the overall domain schedule array and thereby the longest domain schedule that
-is possible to configure at runtime
+is possible to configure at runtime. The default value for
+`config_DomScheduleLength` is 256.
+
+### Initialisation
+
+At system startup, the array contains 2 active entries: entry 0 with domain 0
+and a long duration, and entry 1 with `(0, 0)`. With the following scheme it is
+possible to use the full length of the array even though these two entries are
+already in use.
+
+At kernel boot time, given a user-provided schedule [(d_0, t_0), (d_1, t_1),
+...] that satisfies the requirements [described
+above](#conditions-and-invariants), the root task could achieve the provided
+schedule as follows:
+
+1. First, set up the of rest system as before, including starting all threads
+2. Set all `(d_i, t_i)` according to the schedule where `i > 1`.
+3. Then, overwrite the two active schedule entries 0 and 1 with
+   `(d_0, t_0)` and `(d_1, t_1)`.
+4. Set the schedule start to the desired start value, e.g. index 0
+5. Suspend/stop the initialiser
+
+With this the first run of domain 0 after the initialiser will not get its full
+time slice, because step 5 will already run in the user-provided schedule, but
+after that, the user-provided schedule will be in force.
+
+This works if the initialiser can finish its work within the duration of entry
+0. Since the duration is set to the maximum expressible time, this should in
+practice never be an issue. Even if the time is not sufficient, the procedure
+will still work unless the domain time of the initialiser happens to expire
+during the execution of step 3. If that is a possibility, the initialiser could
+include a suitable delay before step 3 to make this impossible.
+
+The reason the scheme works is that the kernel will not act on new values in the
+schedule before the current domain slice has expired whereas setting the start
+index in step 4 comes into effect immediately.
 
 <!--
 Explain the change or feature as you would to the **developers and maintainers**
@@ -149,7 +234,7 @@ manual.
 
 This section should provide sufficient technical detail to guide any related
 implementation and ongoing maintenance. Where relevant, it should discuss
-expected maintenace, performance, and verification impact.
+expected maintenance, performance, and verification impact.
 
 This section should clearly describe how this change will interact with the
 existing ecosystem, describe particular complex examples that may complicate the
