@@ -256,12 +256,73 @@ from the proposed change that may require specific consideration.
 
 ## Rationale and alternatives
 
-TODO
+The proposed design was chosen for its conceptual simplicity, flexibility,
+implementation simplicity, and low proof impact. There are no changes in how
+domains are treated currently in the implementation at runtime or in the proofs
+for information flow. The current information flow proofs should be fully
+preserved in systems that no longer have the domain capability, which is already
+assumed in the current proofs.
 
-- Why is this design the best in the space of possible designs?
-- What other designs have been considered and what is the rationale for not
-  choosing them?
-- What is the impact of not doing this?
+The two extreme choices in the design space would be to leave the static
+schedule as is and to remove domain scheduler completely. This RFC has already
+motivated why the former is not a good option. Removing the domain scheduler
+from the kernel completely and delegating partition scheduling to user level
+would invalidate the information flow theorems for seL4 without any even
+conceptual formal remedy for the statement of these theorems. Isolation would
+no longer be a property of seL4.
+
+Other points in the design space that have been considered are the following.
+
+### Batched setting of the domain schedule
+
+The current proposal requires multiple kernel calls to set a new schedule -- one
+for each entry in the new domain schedule. An alternative would be to batch
+multiple such calls and collect an entire schedule or larger parts of a schedule
+in the IPC buffer. Since setting new schedules, as opposed to switching between
+existing schedules, is unlikely to be a performance critical operation. That
+means, added complexity of a batched API with variable length arguments brings
+no tangible benefit for system performance or even user convenience.
+
+### Restricting to two schedules
+
+Instead of using one array with end markers, the domain schedule could be
+represented as two (or more) separate arrays: one active, running schedule, and
+one (or more) inactive schedule that can be edited. The representation proposed
+in this RFC achieves the same overall API with more flexibility and less
+storage.
+
+### Allowing zero-length schedules
+
+The API proposed in this RFC forbids schedules of length zero -- these are
+schedules where the start directly points to an end marker. An alternative would
+be to allow such schedules and to treat all entries with duration 0 as end
+markers. A zero-length schedule with an end marker for a domain `d` would then
+mean that the kernel will stay in domain `d` indefinitely until a new schedule
+is set, practically disabling domain scheduling at runtime. The RFC did not
+choose this option, because a one-element schedule with very long domain time
+(e.g. years) already achieves the same result in practice and has a simpler,
+more efficient implementation. Allowing zero-length schedules would require
+additional state to be checked any time the kernel reduces the consumed domain
+time.
+
+### Point of activation of setting domain/duration
+
+In the proposed API domain schedule *switches* take effect immediately, but
+setting domain and duration of an entry in the currently running schedule takes
+effect only the next time the schedule wraps around to the current index.
+
+This behaviour has the simpler implementation and is also simpler conceptually.
+Making domain/duration changes take effect immediately would mean that the
+system call might have to switch immediately to a new domain when either the new
+domain does not match the current domain or the new duration is shorter than the
+already expired domain time. Either would mean that the kernel has already
+violated the new domain schedule and is attempting to catch up and rectify the
+violation. If the semantics instead is that the effect takes place at the next
+time the index is visited, the kernel never needs to violate the schedule.
+
+The behaviour difference is largely theoretical -- the recommended use of the
+API is to never edit the current schedule, but instead edit a new schedule and
+switch to the new schedule atomically.
 
 ## Prior art
 
