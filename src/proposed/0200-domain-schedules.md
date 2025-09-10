@@ -1,23 +1,12 @@
 <!--
   SPDX-License-Identifier: CC-BY-SA-4.0
   Copyright 2025 Proofcraft Pty Ltd
-
-  Based on the Rust RFC template at <https://github.com/rust-lang/rfcs>
 -->
 
 # Runtime Domain Schedules
 
-<!--
- - fill in proposal date
- - Fill in the rest of the sections. It is Ok to leave out sections that do not
-   apply, but don't leave out sections lightly.
-
- - Make a pull request to <https://github.com/seL4/rfcs> to publish the RFC and
-   start formal discussion.
--->
-
 - Author: Gerwin Klein, Rafal Kolanski, Indan Zupancic
-- Proposed: [YYYY-MM-DD fill in]
+- Proposed: 2025-09-10
 
 ## Summary
 
@@ -225,33 +214,33 @@ The reason the scheme works is that the kernel will not act on new values in the
 schedule before the current domain slice has expired whereas setting the start
 index in step 4 comes into effect immediately.
 
-<!--
-Explain the change or feature as you would to the **developers and maintainers**
-of the seL4 ecosystem. For instance, if it is a change to the seL4 API, this
-section would contain the part that should go into API reference of the seL4
-manual.
+### capDL initialiser
 
-This section should provide sufficient technical detail to guide any related
-implementation and ongoing maintenance. Where relevant, it should discuss
-expected maintenance, performance, and verification impact.
+The capDL initialiser will change to also initialise the domain schedule if one
+is provided.
 
-This section should clearly describe how this change will interact with the
-existing ecosystem, describe particular complex examples that may complicate the
-implementation, and describe how the implementation should support the examples
-in the previous section.
--->
+The schedule is provided in a separate new section of the capDL input
+specification, specifying the schedule as a comma-separated list of pairs
+(domain, duration). If no end marker is provided at the end of the list,
+an implicit end marker is assumed.
 
 ## Drawbacks
 
-TODO: breaking change, need to convert `.h` files into initialiser code. Could
-adapt capDL with a schedule section, or provide a separate schedule
-specification for initialiser components.
+The main drawback is that this is a breaking change for users. Setting and
+initialising a domain schedule now works differently, and build scripts may
+need to be updated to no longer generate/add the former `.h` file that contained
+the schedule.
 
-<!--
-Outline any arguments that have been made against this proposal and discuss why
-we may not want to accept it.  Also discuss any complications that may arise
-from the proposed change that may require specific consideration.
--->
+In theory a tool could be provided that converts current `.h` file schedules
+into the capDL sections, but since `.h` files can contain anything we are not
+proposing such a tool as part of this RFC.
+
+Tests for the domain scheduler in sel4test will need to be changed to create the
+test schedules at initialisation time instead of expecting them to be compiled
+in.
+
+Tools and applications that do not use the domain scheduler should be
+unaffected.
 
 ## Rationale and alternatives
 
@@ -325,33 +314,28 @@ switch to the new schedule atomically.
 
 ## Prior art
 
-TODO
+Most separation kernels provide some form of configurable static scheduling.
 
-Discuss prior art, both the good and the bad, in relation to this proposal.  A
-few examples of what this can include are:
+The motivation for the original domain scheduler design in seL4 was an explicit
+customer/user request for a static separation kernel configuration of seL4 with
+static scheduling in a security and information flow context. This also
+motivated the current form of the information flow theorem. For the application
+at the time, the current API was sufficient, but for a more general use case it
+is too restrictive and has too much build system impact, because it needs
+recompilation for schedule changes.
 
-- For ecosystem proposals: Does this feature exist in similar systems and what
-  experience have their community had?
-- For community proposals: Is this done by some other community and what were
-  their experiences with it?
-- What lessons can we learn from what other communities have done here?
-- Are there any published papers or great posts that discuss this? If you have
-  some relevant papers to refer to, this can serve as a more detailed
-  theoretical background.
+Another application area with similar requirements is aviation, in particular
+the ARINC 653 standard, which would be better supported by this RFC than the
+current implementation.
 
-This section is intended to encourage you as an author to think about the
-lessons from other systems, provide readers of your RFC with a fuller picture.
-If there is no prior art, that is fine -- your ideas are interesting to us
-whether they are brand new or if it is an adaptation from other systems.
+This RFC is not attempting to provide a full implementation of any particular
+standard, it merely aims to make the existing API more usable and improve the
+overall developer experience on seL4.
 
-Note that while precedent set by other systems is some motivation, it does not
-on its own motivate an RFC.
 
 ## Unresolved questions
 
-TODO
-
-- What needs to be resolved in further discussion before the RFC is approved?
-- What needs to resolved during the implementation of this RFC?
-- What related questions are beyond the scope of this RFC that should be
-  addressed beyond its implementation?
+The API is expressed in terms of timer ticks in expectation of an additional
+upcoming RFC to change the rest of the API to timer ticks as well. Depending on
+the outcome of that discussion, the API could also be in terms of `time_t`
+instead if required for consistency.
