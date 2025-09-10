@@ -102,9 +102,8 @@ than the currently proposed changes and the same effect can already be achieved
 with a one-element schedule of long duration.
 
 Apart from the value `(0, 0)`, the kernel will prevent the creation of entries
-with duration 0. On MCS, the duration at the API level is in microseconds and
-must be >= MIN_PERIOD. The stored duration is in timer ticks. On non-MCS
-configurations, the duration is measured in number of ticks (time slices).
+with duration 0. The duration is in timer ticks, and on MCS the duration at the
+API level must be >= MIN_PERIOD.
 
 The kernel initialises with an array where all entries are `(0, 0)`, apart from
 the entry at index 0, which will run domain 0 for the maximum expressible time.
